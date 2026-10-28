@@ -367,6 +367,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -376,8 +378,14 @@ jobs:
         run: |
           set -euo pipefail
           cd artifacts
-          ls -lh
-          sha256sum ./*.dmg > SHA256SUMS.txt
+          ls -lh build
+          shopt -s nullglob
+          dmgs=(build/*.dmg)
+          [[ ${#dmgs[@]} -eq 2 ]] || { echo "expected 2 DMGs, found ${#dmgs[@]}"; exit 1; }
+          : > SHA256SUMS.txt
+          for f in "${dmgs[@]}"; do
+            sha256sum "$f" | sed 's#  build/#  #' >> SHA256SUMS.txt
+          done
           cat SHA256SUMS.txt
 
           cat > ../NOTES.md <<'EOF'
@@ -427,11 +435,14 @@ jobs:
         run: |
           set -euo pipefail
           TAG="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          assets=(artifacts/build/*.dmg artifacts/SHA256SUMS.txt HANDOFF.md docs/steam-macos-analysis.md)
+          [[ ${#assets[@]} -eq 5 ]] || { echo "expected 2 DMGs + SHA256SUMS + 2 docs, found ${#assets[@]}"; exit 1; }
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" artifacts/*.dmg artifacts/SHA256SUMS.txt \
+            gh release upload "$TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" artifacts/*.dmg artifacts/SHA256SUMS.txt \
+            gh release create "$TAG" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "LuaTools $TAG (macOS)" \
               --notes-file NOTES.md \
