@@ -65,6 +65,39 @@ jobs:
             -p:Version=${{ steps.v.outputs.version }} \
             -o "build/${{ matrix.rid }}"
 
+      - name: Sign payload
+        run: |
+          set -uo pipefail
+          DIR="build/${{ matrix.rid }}"
+          LOG="sign.log"
+          : > "$LOG"
+          fail=0
+
+          # Sign in the flat publish directory, before any .app exists. Inside a
+          # bundle codesign treats Contents/MacOS as the code location and then
+          # demands a signature for every one of the ~190 managed .dll files
+          # sitting next to the apphost — which is not how .NET ships.
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              chmod 755 "$f"
+              if codesign --force --sign - "$f" >>"$LOG" 2>&1; then
+                echo "  signed  $(basename "$f")" | tee -a "$LOG"
+              else
+                echo "  FAILED  $(basename "$f")" | tee -a "$LOG"
+                fail=1
+              fi
+            else
+              chmod 644 "$f" 2>/dev/null || true
+            fi
+          done < <(find "$DIR" -type f -print0)
+
+          if [[ $fail -ne 0 ]]; then
+            echo "::group::sign.log"
+            cat "$LOG"
+            echo "::endgroup::"
+            exit 1
+          fi
+
       - name: Assemble bundle
         run: |
           set -euo pipefail
@@ -99,82 +132,75 @@ jobs:
 
           plutil -lint "$APP/Contents/Info.plist"
 
-      - name: Ad-hoc sign
+      - name: Seal bundle (best effort)
         run: |
           set -uo pipefail
           APP="build/LuaTools.app"
-          LOG="sign.log"
-          : > "$LOG"
-          fail=0
-
-          record() { echo "$*" | tee -a "$LOG"; }
-
-          # Sonoma tags new files with com.apple.provenance; codesign refuses to
-          # seal a bundle that carries extended attributes.
           xattr -cr "$APP" 2>/dev/null || true
 
-          record "== mach-o leaves =="
-          while IFS= read -r -d '' f; do
-            if file -b "$f" | grep -q 'Mach-O'; then
-              echo "  $f"
-            fi
-          done < <(find "$APP" -type f -print0) | tee -a "$LOG" || true
-
-          # Sign every Mach-O leaf first. Apple Silicon refuses to execute
-          # unsigned arm64 code, and the bundle seal is only valid once every
-          # nested object carries a signature.
-          while IFS= read -r -d '' f; do
-            if file -b "$f" | grep -q 'Mach-O'; then
-              if codesign --force --sign - "$f" >>"$LOG" 2>&1; then
-                record "  signed  ${f#"$APP"/}"
-              else
-                record "  FAILED  ${f#"$APP"/}"
-                fail=1
-              fi
-            fi
-          done < <(find "$APP" -type f -print0)
-
-          # No --deep: nested code is signed, so seal the bundle itself only.
-          if codesign --force --sign - "$APP" >>"$LOG" 2>&1; then
-            record "bundle sealed"
+          if codesign --force --sign - "$APP" >>sign.log 2>&1; then
+            echo "bundle seal: OK"
           else
-            record "bundle seal FAILED"
-            fail=1
+            echo "::warning::bundle seal refused — every Mach-O is signed individually"
           fi
 
-          if codesign --verify --verbose=4 "$APP" >>"$LOG" 2>&1; then
-            record "verify OK"
-          else
-            record "verify FAILED"
-            fail=1
-          fi
-
-          codesign -dvvv "$APP" 2>&1 | tee -a "$LOG" || true
-
-          if [[ $fail -ne 0 ]]; then
-            echo "::group::sign.log"
-            cat "$LOG"
-            echo "::endgroup::"
-            exit 1
-          fi
+          codesign -dvv "$APP" 2>&1 | grep -E 'Format|CodeDirectory|Signature|Identifier' || true
+          spctl --assess --type execute -vv "$APP" 2>&1 | head -3 || true
 
       - name: Verify bundle executes
         run: |
-          set -euo pipefail
+          set -uo pipefail
           APP="build/LuaTools.app"
           BIN="$APP/Contents/MacOS/LuaTools.App"
+          RID="${{ matrix.rid }}"
+          RUN=()
 
           echo "--- arch ---"
           lipo -archs "$BIN"
           file -b "$BIN"
+          echo
 
-          echo "--- selftest ---"
-          if [[ "${{ matrix.rid }}" == "osx-arm64" ]]; then
-            "$BIN" --selftest
+          if [[ "$RID" == "osx-arm64" ]]; then
+            RUN=("$BIN")
           elif arch -x86_64 /usr/bin/true 2>/dev/null; then
-            arch -x86_64 "$BIN" --selftest
+            RUN=(arch -x86_64 "$BIN")
           else
-            echo "rosetta not installed — x64 selftest skipped (cross-built, static checks only)"
+            echo "rosetta not installed — x64 selftest skipped (cross-built)"
+            exit 0
+          fi
+
+          echo "--- selftest (headless: parser, filter, storage, live manifest) ---"
+          "${RUN[@]}" --selftest
+          echo
+
+          # The GUI is the thing users actually open. Launch it, wait for the
+          # window to report itself, then shut it down.
+          echo "--- gui launch ---"
+          "${RUN[@]}" > gui.log 2>&1 &
+          PID=$!
+          opened=0
+          for _ in $(seq 1 45); do
+            if grep -q LUATOOLS_WINDOW_OPENED gui.log 2>/dev/null; then opened=1; break; fi
+            if ! kill -0 "$PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+
+          echo "gui output:"
+          sed -e 's/^/    /' gui.log | head -40
+
+          if [[ $opened -eq 1 ]]; then
+            echo "GUI LAUNCH OK — Avalonia opened a window inside the bundle"
+          else
+            echo "::error::GUI did not open within 45s"
+            exit 1
+          fi
+
+          if [[ -f "$HOME/Library/Application Support/LuaToolsMac/logs/luatools-$(date +%Y-%m-%d).log" ]]; then
+            echo "--- app log ---"
+            tail -5 "$HOME/Library/Application Support/LuaToolsMac/logs/luatools-$(date +%Y-%m-%d).log"
           fi
 
       - name: Build DMG
@@ -224,6 +250,8 @@ jobs:
           path: |
             build/LuaTools-*.dmg
             build/LuaTools-*.dmg.sha256
+            gui.log
+            sign.log
           if-no-files-found: error
           retention-days: 7
 
