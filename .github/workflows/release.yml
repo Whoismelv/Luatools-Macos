@@ -226,14 +226,14 @@ jobs:
           Install: drag LuaTools.app onto the Applications folder in this window.
 
           This build is ad-hoc signed, not notarized by Apple, so Gatekeeper will
-          block the first launch. Two ways to allow it:
+          block the first launch. Use Terminal:
 
-            1. System Settings -> Privacy & Security -> scroll down ->
-               "LuaTools was blocked" -> Open Anyway.
+             xattr -dr com.apple.quarantine /Applications/LuaTools.app
+             open /Applications/LuaTools.app
 
-            2. Terminal (simplest):
-                 xattr -dr com.apple.quarantine /Applications/LuaTools.app
-                 open /Applications/LuaTools.app
+          Do not rely on System Settings -> Open Anyway for this build: the
+          bundle signature is incomplete, so Gatekeeper may report it as
+          damaged. The xattr command is tested by the release build.
 
           Requirements: macOS 11 or newer. The .NET runtime is bundled.
 
@@ -388,31 +388,37 @@ jobs:
           1. Download the `.dmg` for your machine: `arm64` (Apple Silicon) or `x64` (Intel).
           2. Open it and drag **LuaTools.app** onto **Applications**.
           3. First launch is blocked by Gatekeeper because the build is ad-hoc signed,
-             not notarized by Apple. Allow it once:
+             not notarized by Apple. Clear the quarantine flag once:
 
           ```sh
           xattr -dr com.apple.quarantine /Applications/LuaTools.app
           open /Applications/LuaTools.app
           ```
 
-             Or: System Settings → Privacy & Security → "Open Anyway".
+             Use this command, not "Open Anyway": the bundle signature is
+             incomplete, so Gatekeeper may report the app as damaged.
 
           ## What this build does
 
           - Steam discovery, library and `appmanifest_*.acf` parsing
           - Steam app/depot metadata, macOS depot detection via `config.oslist`
-          - DepotDownloader acquisition and download with live progress
+          - DepotDownloader acquisition (self-contained macOS release) and download
+            with live progress
           - `luabuilds_*.lua` read/write
 
           ## What it does not do
 
+          - No Steam account login. Downloads are anonymous only; Steam refuses
+            paid games and free games that require ownership.
           - No Steam client injection (the `inject/` harness is research, not a feature)
           - No DRM removal — Steamless is PE-only and does not apply to macOS
-          - Anonymous downloads of paid games are rejected by Steam itself
+          - A depot download is not a Steam install; games will not appear in your
+            Steam library
 
           Every build is ad-hoc signed and verified on a macOS runner. The arm64
-          build additionally runs `LuaTools.App --selftest` there before packaging,
-          so the binary in this release provably executes on Apple Silicon.
+          build runs `--selftest` and `--verify-tools`, then mounts the finished
+          DMG, copies the app, sets a quarantine attribute, clears it with the
+          command above, and proves the copied app opens a window.
           EOF
 
       - name: Publish

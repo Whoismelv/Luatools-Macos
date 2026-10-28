@@ -134,6 +134,8 @@ public sealed partial class MainViewModel : ViewModelBase
     [ObservableProperty] private string _selectedAppTitle = "no app selected";
     [ObservableProperty] private string _selectedAppMeta = "";
     [ObservableProperty] private bool _isBusy;
+    [ObservableProperty] private bool _canDownload;
+    private long _selectedAppId;
 
     [ObservableProperty] private string _configSteamPath = "";
     [ObservableProperty] private string _configInstallRoot = "";
@@ -246,6 +248,8 @@ public sealed partial class MainViewModel : ViewModelBase
 
         IsBusy = true;
         Depots.Clear();
+        CanDownload = false;
+        _selectedAppId = 0;
         SelectedAppTitle = result.Name;
         SelectedAppMeta = $"appid {result.AppId} · loading depots…";
 
@@ -257,6 +261,8 @@ public sealed partial class MainViewModel : ViewModelBase
                 SelectedAppMeta = $"appid {result.AppId} · no depot data";
                 return;
             }
+
+            _selectedAppId = info.AppId;
 
             var macDepots = info.MacDepots;
             var toShow = MacOnly ? macDepots : info.Depots;
@@ -277,6 +283,7 @@ public sealed partial class MainViewModel : ViewModelBase
             SelectedAppMeta = $"appid {info.AppId} · ✓ macOS · {macDepots.Count} mac depot(s) · " +
                               $"{macGb:F2} GB · {info.Developer ?? "?"}";
             StatusLine = $"{info.Name} loaded — macOS supported ({toShow.Count} depots shown, {totalGb:F2} GB)";
+            CanDownload = true;
         }
         catch (Exception ex)
         {
@@ -291,6 +298,12 @@ public sealed partial class MainViewModel : ViewModelBase
     [RelayCommand]
     private void QueueDownload()
     {
+        if (!CanDownload || _selectedAppId <= 0)
+        {
+            StatusLine = "select an app with a macOS build first";
+            return;
+        }
+
         var selected = Depots.Where(d => d.IsSelected).Select(d => d.DepotId).ToArray();
         if (selected.Length == 0)
         {
@@ -298,7 +311,7 @@ public sealed partial class MainViewModel : ViewModelBase
             return;
         }
 
-        var appId = ParseAppId(SelectedAppMeta);
+        var appId = _selectedAppId;
         var root = string.IsNullOrWhiteSpace(ConfigInstallRoot)
             ? Path.Combine(PlatformPaths.Home, "Games", "LuaTools")
             : ConfigInstallRoot;
@@ -431,16 +444,6 @@ public sealed partial class MainViewModel : ViewModelBase
         if (entry is null) return;
         var path = _builds.WriteLua(entry);
         StatusLine = $"lua written: {path}";
-    }
-
-    private static long ParseAppId(string meta)
-    {
-        var marker = meta.IndexOf("appid ", StringComparison.OrdinalIgnoreCase);
-        if (marker < 0) return 0;
-        var rest = meta[(marker + 6)..];
-        var end = rest.IndexOfAny([' ', '·']);
-        var span = end < 0 ? rest : rest[..end];
-        return long.TryParse(span, out var id) ? id : 0;
     }
 
     private static string Sanitize(string name)

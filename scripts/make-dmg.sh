@@ -29,12 +29,13 @@ LuaTools for macOS
 Install: drag LuaTools.app onto the Applications folder in this window.
 
 This build is ad-hoc signed, not notarized by Apple, so Gatekeeper blocks the
-first launch. Allow it once:
+first launch. Use Terminal:
 
     xattr -dr com.apple.quarantine /Applications/LuaTools.app
     open /Applications/LuaTools.app
 
-Or: System Settings -> Privacy & Security -> "Open Anyway".
+Do not rely on System Settings -> Open Anyway: the bundle signature is
+incomplete, so Gatekeeper may report it as damaged.
 
 Requirements: macOS 11 or newer. The .NET runtime is bundled.
 

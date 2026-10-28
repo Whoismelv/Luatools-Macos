@@ -8,21 +8,28 @@ Nothing here bypasses anything yet. It is an instrument: it proves whether
 injection works on your specific Steam build and tells us what the client looks
 like from the inside. Everything else is guesswork until this runs.
 
-## Why this is possible at all
+## What is actually known (measured)
 
-Two open-source projects established the facts:
+The shipped bootstrapper was probed on a real `macos-14` runner — see
+[`../docs/steam-macos-analysis.md`](../docs/steam-macos-analysis.md):
 
-- **loks0n/fakepad** — Steam's inner client (`steam_osx`) has no hardened
-  runtime and no library validation, so `DYLD_INSERT_LIBRARIES` loads. The
-  outer `.app` bootstrapper *does* have the hardened runtime and strips `DYLD_*`
-  before exec'ing the real client. Their fix: a launcher that sets the variable
-  itself and starts the inner client under a controlling pty so Steam doesn't
-  re-exec through the bootstrapper.
-- **raymondchins/Bridgeplay** — a production dylib injected into `steam_osx`
-  and Steam Helper, using byte-signature scanning (`signatures/macos.arm64/`)
-  instead of fixed addresses, and re-patching itself after Steam updates.
+- `steam_osx` is 4.6 MB, **x86_64-only**, **hardened runtime**
+  (`flags=0x10000(runtime)`), notarized, signed by Valve (`MXGJJ98X76`).
+- It has **no** `com.apple.security.cs.allow-dyld-environment-variables` and
+  **no** `com.apple.security.cs.disable-library-validation`.
+- It contains no `stplug-in` / `addappid` / `luabuilds` / `depotcache` /
+  `appmanifest` strings.
+- On a runner with **SIP disabled**, a correctly-architected x86_64 dylib did
+  land. That is not evidence for a default SIP-enabled Mac.
+- The full inner client was not captured; the `steam_osx` found under
+  `~/Library/Application Support/Steam` was a 4.4 MB copy of the bootstrapper.
 
-This repo is the same shape, much smaller, aimed at a different target.
+This contradicts the earlier fakepad-derived assumption that the shipped
+`steam_osx` has no hardened runtime. Fakepad may be talking about the inner
+client. Treat that as unmeasured until `probe.sh` runs on your Mac.
+
+The harness is still useful: it answers the question with evidence on the exact
+machine that matters.
 
 ## What it does
 
@@ -58,7 +65,8 @@ export LUATOOLS_LOG=/tmp/luatools-inject.log
 cat /tmp/luatools-inject.log
 ```
 
-If the log shows `======== injection landed ========`, layer 2 is done.
+If the log shows `======== injection landed ========`, layer 2 works on that
+machine with SIP as it is. Record `csrutil status` next to the result.
 
 ## Signature table
 
@@ -85,9 +93,11 @@ inject/probe.sh           macOS-side recon, writes probe-<ts>.txt
 
 ## Status
 
-Untested. Written on Windows, cannot be compiled here. First run on a Mac will
-surface the real problems: struct packing, `__TEXT` offset assumptions, and
-whether Steam's inner client on your version re-execs.
+The dylib and scanner have not been built on a Mac here. The only injection
+evidence so far is the CI probe: x86_64 dylib, SIP **disabled**, landed in the
+bootstrapper. The decisive run is `probe.sh` on a SIP-enabled Apple Silicon Mac
+with the full Steam client installed.
 
-That is the point. It is cheaper to find those out now than after a month of
-building on assumptions.
+The expected problems on first real run: struct packing, `__TEXT` offset
+assumptions, code signing of the dylib, and whether Steam re-execs through the
+bootstrapper. Find those before building hooks on top.
