@@ -1,0 +1,82 @@
+run:  https://github.com/Whoismelv/Luatools-Macos/actions/runs/40778544578
+rid:  osx-x64
+--- sign.log ---
+== mach-o leaves ==
+  build/LuaTools.app/Contents/MacOS/createdump
+  build/LuaTools.app/Contents/MacOS/libcoreclr.dylib
+  build/LuaTools.app/Contents/MacOS/libSystem.Native.dylib
+  build/LuaTools.app/Contents/MacOS/libHarfBuzzSharp.dylib
+  build/LuaTools.app/Contents/MacOS/libAvaloniaNative.dylib
+  build/LuaTools.app/Contents/MacOS/libSystem.IO.Compression.Native.dylib
+  build/LuaTools.app/Contents/MacOS/LuaTools.App
+  build/LuaTools.app/Contents/MacOS/libSkiaSharp.dylib
+  build/LuaTools.app/Contents/MacOS/libSystem.Globalization.Native.dylib
+  build/LuaTools.app/Contents/MacOS/libSystem.Security.Cryptography.Native.Apple.dylib
+  build/LuaTools.app/Contents/MacOS/libmscordaccore.dylib
+  build/LuaTools.app/Contents/MacOS/libhostfxr.dylib
+  build/LuaTools.app/Contents/MacOS/libSystem.Net.Security.Native.dylib
+  build/LuaTools.app/Contents/MacOS/libmscordbi.dylib
+  build/LuaTools.app/Contents/MacOS/libhostpolicy.dylib
+  build/LuaTools.app/Contents/MacOS/libSystem.Security.Cryptography.Native.OpenSsl.dylib
+  build/LuaTools.app/Contents/MacOS/libclrjit.dylib
+  build/LuaTools.app/Contents/MacOS/libclrgc.dylib
+build/LuaTools.app/Contents/MacOS/createdump: replacing existing signature
+  signed  Contents/MacOS/createdump
+build/LuaTools.app/Contents/MacOS/libcoreclr.dylib: replacing existing signature
+  signed  Contents/MacOS/libcoreclr.dylib
+build/LuaTools.app/Contents/MacOS/libSystem.Native.dylib: replacing existing signature
+  signed  Contents/MacOS/libSystem.Native.dylib
+build/LuaTools.app/Contents/MacOS/libHarfBuzzSharp.dylib: replacing existing signature
+  signed  Contents/MacOS/libHarfBuzzSharp.dylib
+build/LuaTools.app/Contents/MacOS/libAvaloniaNative.dylib: replacing existing signature
+  signed  Contents/MacOS/libAvaloniaNative.dylib
+build/LuaTools.app/Contents/MacOS/libSystem.IO.Compression.Native.dylib: replacing existing signature
+  signed  Contents/MacOS/libSystem.IO.Compression.Native.dylib
+build/LuaTools.app/Contents/MacOS/LuaTools.App: replacing existing signature
+build/LuaTools.app/Contents/MacOS/LuaTools.App: code object is not signed at all
+In subcomponent: /Users/runner/work/Luatools-Macos/Luatools-Macos/build/LuaTools.app/Contents/MacOS/System.Diagnostics.Contracts.dll
+  FAILED  Contents/MacOS/LuaTools.App
+build/LuaTools.app/Contents/MacOS/libSkiaSharp.dylib: replacing existing signature
+  signed  Contents/MacOS/libSkiaSharp.dylib
+build/LuaTools.app/Contents/MacOS/libSystem.Globalization.Native.dylib: replacing existing signature
+  signed  Contents/MacOS/libSystem.Globalization.Native.dylib
+build/LuaTools.app/Contents/MacOS/libSystem.Security.Cryptography.Native.Apple.dylib: replacing existing signature
+  signed  Contents/MacOS/libSystem.Security.Cryptography.Native.Apple.dylib
+build/LuaTools.app/Contents/MacOS/libmscordaccore.dylib: replacing existing signature
+  signed  Contents/MacOS/libmscordaccore.dylib
+build/LuaTools.app/Contents/MacOS/libhostfxr.dylib: replacing existing signature
+  signed  Contents/MacOS/libhostfxr.dylib
+build/LuaTools.app/Contents/MacOS/libSystem.Net.Security.Native.dylib: replacing existing signature
+  signed  Contents/MacOS/libSystem.Net.Security.Native.dylib
+build/LuaTools.app/Contents/MacOS/libmscordbi.dylib: replacing existing signature
+  signed  Contents/MacOS/libmscordbi.dylib
+build/LuaTools.app/Contents/MacOS/libhostpolicy.dylib: replacing existing signature
+  signed  Contents/MacOS/libhostpolicy.dylib
+build/LuaTools.app/Contents/MacOS/libSystem.Security.Cryptography.Native.OpenSsl.dylib: replacing existing signature
+  signed  Contents/MacOS/libSystem.Security.Cryptography.Native.OpenSsl.dylib
+build/LuaTools.app/Contents/MacOS/libclrjit.dylib: replacing existing signature
+  signed  Contents/MacOS/libclrjit.dylib
+build/LuaTools.app/Contents/MacOS/libclrgc.dylib: replacing existing signature
+  signed  Contents/MacOS/libclrgc.dylib
+build/LuaTools.app: replacing existing signature
+build/LuaTools.app: code object is not signed at all
+In subcomponent: /Users/runner/work/Luatools-Macos/Luatools-Macos/build/LuaTools.app/Contents/MacOS/System.Diagnostics.Contracts.dll
+bundle seal FAILED
+build/LuaTools.app: code has no resources but signature indicates they must be present
+verify FAILED
+Executable=/Users/runner/work/Luatools-Macos/Luatools-Macos/build/LuaTools.app/Contents/MacOS/LuaTools.App
+Identifier=apphost
+Format=app bundle with Mach-O thin (x86_64)
+CodeDirectory v=20400 size=832 flags=0x2(adhoc) hashes=21+2 location=embedded
+Hash type=sha256 size=32
+CandidateCDHash sha256=cdd32a86a4fc552c2a88a42e772139f9d0facd67
+CandidateCDHashFull sha256=cdd32a86a4fc552c2a88a42e772139f9d0facd676da3bacfe65e7b22a00bca7b
+Hash choices=sha256
+CMSDigest=cdd32a86a4fc552c2a88a42e772139f9d0facd676da3bacfe65e7b22a00bca7b
+CMSDigestType=2
+CDHash=cdd32a86a4fc552c2a88a42e772139f9d0facd67
+Signature=adhoc
+Info.plist=not bound
+TeamIdentifier=not set
+Sealed Resources=none
+Internal requirements count=0 size=12
