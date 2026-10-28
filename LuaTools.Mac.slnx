@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LuaTools.App/LuaTools.App.csproj" />
+    <Project Path="src/LuaTools.Core/LuaTools.Core.csproj" />
+  </Folder>
+</Solution>

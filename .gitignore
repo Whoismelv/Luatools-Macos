@@ -1,0 +1,20 @@
+# build output
+bin/
+obj/
+dist/
+
+# local test artifacts
+test/
+
+# user-specific
+*.user
+.vs/
+.idea/
+*.suo
+
+# os noise
+.DS_Store
+Thumbs.db
+
+# probe reports contain local paths
+inject/probe-*.txt

@@ -1,0 +1,267 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LuaTools.App.Views.MainWindow"
+        Title="LuaTools"
+        Width="1180" Height="760"
+        MinWidth="900" MinHeight="600"
+        Background="#0B0E13"
+        FontFamily="{StaticResource InterFont}">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.h1">
+      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#F3F4F6" />
+    </Style>
+    <Style Selector="TextBlock.sub">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="#8B94A3" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#131822" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="14" />
+      <Setter Property="Margin" Value="0,0,0,10" />
+      <Setter Property="BorderBrush" Value="#1E2530" />
+      <Setter Property="BorderThickness" Value="1" />
+    </Style>
+    <Style Selector="Button.action">
+      <Setter Property="Background" Value="#1F6FEB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="Button.ghost">
+      <Setter Property="Background" Value="#1A2130" />
+      <Setter Property="Foreground" Value="#D6DBE3" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="12,7" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="#0F141D" />
+      <Setter Property="Foreground" Value="#E5E9F0" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="BorderBrush" Value="#222B38" />
+    </Style>
+    <Style Selector="ListBox">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TabItem">
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="MinHeight" Value="40" />
+    </Style>
+  </Window.Styles>
+
+  <DockPanel>
+
+    <Border DockPanel.Dock="Top" Background="#0E131B" Padding="18,14" BorderBrush="#1A212B" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <TextBlock Text="LuaTools" Classes="h1" VerticalAlignment="Center" />
+          <TextBlock Text="macOS build" Classes="sub" VerticalAlignment="Center" Margin="0,6,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="18" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock Text="{Binding SteamStatus}" Classes="sub" />
+          <TextBlock Text="{Binding ToolStatus}" Classes="sub" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+          <Button Content="Install tool" Classes="ghost" Command="{Binding InstallToolCommand}" />
+          <Button Content="Refresh" Classes="ghost" Command="{Binding RefreshInstalledCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" Background="#0E131B" Padding="18,8" BorderBrush="#1A212B" BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding StatusLine}" Classes="sub" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" Text="{Binding LogTail}" Classes="sub" Opacity="0.6" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <TabControl TabStripPlacement="Left" Padding="0" Margin="0">
+
+      <!-- HOME -->
+      <TabItem Header="Home">
+        <Grid Margin="18" RowDefinitions="Auto,*">
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+            <TextBlock Text="Installed" Classes="h1" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding Installed.Count, StringFormat='{}{0} apps'}" Classes="sub" VerticalAlignment="Center" Margin="0,6,0,0" />
+          </StackPanel>
+
+          <ScrollViewer Grid.Row="1">
+            <ItemsControl ItemsSource="{Binding Installed}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Classes="card">
+                    <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto">
+                      <TextBlock Text="{Binding Name}" Foreground="#E9EDF3" FontSize="15" FontWeight="SemiBold" />
+                      <TextBlock Grid.Row="1" Text="{Binding InstallDir}" Classes="sub" />
+                      <TextBlock Grid.Column="1" Grid.RowSpan="2" Text="{Binding SizeText}" Classes="sub" VerticalAlignment="Center" Margin="12,0" />
+                      <Button Grid.Column="2" Grid.RowSpan="2" Content="Open" Classes="ghost"
+                              Command="{Binding $parent[ItemsControl].DataContext.OpenFolderCommand}"
+                              CommandParameter="{Binding InstallDir}" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
+
+      <!-- ADD -->
+      <TabItem Header="Add">
+        <Grid Margin="18" ColumnDefinitions="380,*" ColumnSpacing="16">
+          <DockPanel Grid.Column="0">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,10">
+              <TextBox Text="{Binding SearchText}" Watermark="search steam apps…" Width="240" />
+              <Button Content="Search" Classes="action" Command="{Binding SearchCommand}" />
+              <CheckBox Content="macOS only" IsChecked="{Binding MacOnly}" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <ScrollViewer>
+              <ItemsControl ItemsSource="{Binding SearchResults}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Button Content="{Binding Label}"
+                            Classes="ghost"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Left"
+                            Margin="0,0,0,6"
+                            Command="{Binding $parent[ItemsControl].DataContext.LoadAppCommand}"
+                            CommandParameter="{Binding}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </DockPanel>
+
+          <DockPanel Grid.Column="1">
+            <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+              <TextBlock Text="{Binding SelectedAppTitle}" Classes="h1" />
+              <TextBlock Text="{Binding SelectedAppMeta}" Classes="sub" />
+            </StackPanel>
+
+            <Button DockPanel.Dock="Bottom" Content="Queue selected depots" Classes="action"
+                    Margin="0,10,0,0" HorizontalAlignment="Left"
+                    Command="{Binding QueueDownloadCommand}" />
+
+            <ScrollViewer>
+              <ItemsControl ItemsSource="{Binding Depots}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="card" Padding="10">
+                      <Grid ColumnDefinitions="Auto,*,Auto">
+                        <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Margin="8,0">
+                          <TextBlock Text="{Binding Name}" Foreground="#E3E8EF" />
+                          <TextBlock Text="{Binding DepotId}" Classes="sub" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                          <TextBlock Text="{Binding SizeText}" Classes="sub" HorizontalAlignment="Right" />
+                          <TextBlock Text="{Binding PlatformLabel}" Classes="sub" HorizontalAlignment="Right" Opacity="0.7" />
+                        </StackPanel>
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </DockPanel>
+        </Grid>
+      </TabItem>
+
+      <!-- DOWNLOADS -->
+      <TabItem Header="Downloads">
+        <ScrollViewer Margin="18">
+          <ItemsControl ItemsSource="{Binding Downloads}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Classes="card">
+                  <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                    <TextBlock Text="{Binding Name}" Foreground="#E9EDF3" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="1" Text="{Binding StatusText}" Classes="sub" VerticalAlignment="Center" />
+
+                    <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="100"
+                                 Value="{Binding Percent}"
+                                 IsIndeterminate="{Binding IsIndeterminate}"
+                                 Height="6" Margin="0,8,0,6" CornerRadius="3" />
+
+                    <TextBlock Grid.Row="2" Text="{Binding Detail}" Classes="sub" />
+                    <Button Grid.Row="2" Grid.Column="1" Content="Cancel" Classes="ghost"
+                            Command="{Binding $parent[ItemsControl].DataContext.CancelDownloadCommand}"
+                            CommandParameter="{Binding}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- BUILDS -->
+      <TabItem Header="Builds">
+        <ScrollViewer Margin="18">
+          <ItemsControl ItemsSource="{Binding Builds}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Classes="card">
+                  <Grid ColumnDefinitions="*,Auto,Auto">
+                    <StackPanel>
+                      <TextBlock Text="{Binding Name}" Foreground="#E9EDF3" FontSize="15" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding Summary}" Classes="sub" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Export .lua" Classes="ghost" Margin="8,0"
+                            Command="{Binding $parent[ItemsControl].DataContext.ExportBuildCommand}"
+                            CommandParameter="{Binding}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- SETTINGS -->
+      <TabItem Header="Settings">
+        <ScrollViewer Margin="18">
+          <StackPanel Spacing="14" MaxWidth="640" HorizontalAlignment="Left">
+
+            <Border Classes="card">
+              <StackPanel Spacing="10">
+                <TextBlock Text="Steam" FontSize="15" FontWeight="SemiBold" Foreground="#E9EDF3" />
+                <TextBlock Text="Leave empty to auto-detect (~/Library/Application Support/Steam)." Classes="sub" />
+                <TextBox Text="{Binding ConfigSteamPath}" Watermark="/Users/you/Library/Application Support/Steam" />
+              </StackPanel>
+            </Border>
+
+            <Border Classes="card">
+              <StackPanel Spacing="10">
+                <TextBlock Text="Installs" FontSize="15" FontWeight="SemiBold" Foreground="#E9EDF3" />
+                <TextBlock Text="Default install root" Classes="sub" />
+                <TextBox Text="{Binding ConfigInstallRoot}" />
+                <TextBlock Text="Language" Classes="sub" />
+                <TextBox Text="{Binding ConfigLanguage}" />
+                <TextBlock Text="Concurrent depot downloads" Classes="sub" />
+                <NumericUpDown Value="{Binding ConfigMaxDownloads}" Minimum="1" Maximum="32" />
+                <TextBlock Text="Depot platform (macos / windows / linux / auto)" Classes="sub" />
+                <TextBox Text="{Binding ConfigTargetPlatform}" />
+                <CheckBox Content="Validate after download" IsChecked="{Binding ConfigValidate}" />
+              </StackPanel>
+            </Border>
+
+            <Button Content="Save settings" Classes="action" HorizontalAlignment="Left" Command="{Binding SaveSettingsCommand}" />
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+    </TabControl>
+  </DockPanel>
+</Window>
