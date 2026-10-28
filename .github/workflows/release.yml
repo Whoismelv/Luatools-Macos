@@ -109,10 +109,16 @@ jobs:
 
           record() { echo "$*" | tee -a "$LOG"; }
 
+          # Sonoma tags new files with com.apple.provenance; codesign refuses to
+          # seal a bundle that carries extended attributes.
+          xattr -cr "$APP" 2>/dev/null || true
+
           record "== mach-o leaves =="
-          find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
-            file -b "$f" | grep -q 'Mach-O' && echo "  $f"
-          done | tee -a "$LOG"
+          while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              echo "  $f"
+            fi
+          done < <(find "$APP" -type f -print0) | tee -a "$LOG" || true
 
           # Sign every Mach-O leaf first. Apple Silicon refuses to execute
           # unsigned arm64 code, and the bundle seal is only valid once every
