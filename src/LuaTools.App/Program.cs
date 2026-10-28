@@ -8,6 +8,7 @@ internal static class Program
     public static int Main(string[] args)
     {
         if (args.Contains("--selftest")) return SelfTest.Run();
+        if (args.Contains("--verify-tools")) return ToolCheck.RunAsync().GetAwaiter().GetResult();
 
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         return 0;

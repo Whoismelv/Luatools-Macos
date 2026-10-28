@@ -1,11 +1,18 @@
 name: steam-probe
 
-# Reads the real Steam for macOS client and answers one question with evidence:
-# can code be injected into it, and does it contain anything like the Windows
-# stplug-in lua path?
+# Reads the real Steam for macOS client and answers, with measurements:
 #
-# Read-only: the DMG is mounted read-only, nothing inside Steam.app is modified,
-# and the injection test exits inside the injected constructor.
+#   * what the 6.9 MB bootstrapper contains,
+#   * where first launch puts the real client,
+#   * whether that client is arm64 or Intel-only,
+#   * how it is signed (hardened runtime, notarization, entitlements),
+#   * whether it contains anything resembling the Windows stplug-in lua path,
+#   * whether DYLD_INSERT_LIBRARIES actually lands in it.
+#
+# Read-only with respect to Valve's code: the DMG is mounted read-only and no
+# file inside Steam.app is modified. Steam itself writes to ~/Library, which is
+# a disposable runner home. Injection tests exit inside the injected
+# constructor, so they never reach Steam's own code.
 
 on:
   workflow_dispatch:
@@ -16,7 +23,9 @@ permissions:
 jobs:
   probe:
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 40
+    env:
+      APP: /tmp/vol/Steam.app
     steps:
       - name: Host
         run: |
@@ -24,6 +33,11 @@ jobs:
           sw_vers
           echo "arch: $(uname -m)"
           csrutil status || true
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "rosetta: present"
+          else
+            echo "rosetta: missing"
+          fi
 
       - name: Fetch Steam
         run: |
@@ -37,90 +51,60 @@ jobs:
           mkdir -p /tmp/vol
           hdiutil attach steam.dmg -nobrowse -readonly -noautoopen -mountpoint /tmp/vol \
             || hdiutil attach steam.dmg -nobrowse -readonly -noautoopen
-          echo "--- mounted ---"
           ls -la /tmp/vol
-
-      - name: Locate Steam.app
-        run: |
-          APP=$(find /tmp/vol /Volumes -maxdepth 3 -name 'Steam.app' -type d 2>/dev/null | head -1)
-          echo "APP=$APP"
-          [[ -n "$APP" ]] || { echo "::error::no Steam.app"; exit 1; }
+          [[ -d "$APP" ]] || APP=$(find /tmp/vol /Volumes -maxdepth 3 -name 'Steam.app' -type d 2>/dev/null | head -1)
           echo "APP=$APP" >> "$GITHUB_ENV"
-          echo "--- bundle ---"
-          find "$APP" -maxdepth 3 | head -40
-          echo "--- size ---"
-          du -sh "$APP"
-          echo "--- version ---"
-          defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || \
-            plutil -p "$APP/Contents/Info.plist" | head -20
+          [[ -d "$APP" ]] || { echo "::error::no Steam.app"; exit 1; }
 
-      - name: Mach-O layout
+      - name: Bundle layout
         run: |
-          APP="$APP"
-          echo "--- Contents/MacOS ---"
-          ls -la "$APP/Contents/MacOS"
-          for f in "$APP/Contents/MacOS/"*; do
-            [[ -f "$f" ]] || continue
-            echo "== $f"
-            file -b "$f"
-            lipo -archs "$f" 2>/dev/null || true
-          done
-
-      - name: Code signature of the bootstrapper
-        run: |
-          APP="$APP"
-          echo "== app bundle =="
-          codesign -dvvv "$APP" 2>&1 | head -30
+          echo "--- entries ---"
+          find "$APP" -mindepth 1 -maxdepth 6 -print | sort
           echo
-          echo "== entitlements =="
-          codesign -d --entitlements - "$APP" 2>&1 | head -40
+          echo "--- sizes ---"
+          du -ah "$APP" | sort -h | tail -15
           echo
-          echo "== hardened runtime flag =="
-          codesign -dvvv "$APP" 2>&1 | grep -i 'flags' || echo "no flags line"
-
-      - name: Code signature of the inner client
-        run: |
-          APP="$APP"
-          BIN="$APP/Contents/MacOS/steam_osx"
-          if [[ ! -f "$BIN" ]]; then
-            echo "no steam_osx — these are the binaries present:"
-            ls -la "$APP/Contents/MacOS"
-            exit 0
-          fi
-          echo "== $BIN =="
-          codesign -dvvv "$BIN" 2>&1 | head -30
-          echo
-          echo "== entitlements =="
-          codesign -d --entitlements - "$BIN" 2>&1 | head -40
-          echo
-          echo "== __RESTRICT segment (a hard block on DYLD_*) =="
-          otool -l "$BIN" | grep -A2 -i '__RESTRICT' || echo "none"
-          echo
-          echo "== LC_RPATH =="
-          otool -l "$BIN" | grep -A2 LC_RPATH | grep path || echo "none"
-          echo
-          echo "== linked libraries =="
-          otool -L "$BIN" | head -30
-
-      - name: Strings that matter
-        run: |
-          APP="$APP"
-          BIN="$APP/Contents/MacOS/steam_osx"
-          [[ -f "$BIN" ]] || exit 0
-          for s in stplug-in addappid luabuilds depotcache steamapps libraryfolders appmanifest; do
-            printf '%-16s ' "$s"
-            strings -a "$BIN" | grep -c -- "$s" 2>/dev/null || echo 0
+          echo "--- every Mach-O in the bundle ---"
+          find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            desc=$(file -b "$f")
+            if [[ "$desc" == *Mach-O* ]]; then
+              printf '%-58s %s\n' "${f#"$APP"/}" "$desc"
+              printf '%-58s arch: %s\n' "" "$(lipo -archs "$f" 2>/dev/null || echo '?')"
+            fi
           done
           echo
-          echo "--- sample context for 'lua' ---"
-          strings -a "$BIN" | grep -i 'lua' | head -15 || echo none
+          echo "--- Resources/public ---"
+          ls -la "$APP/Contents/Resources/public"
 
-      - name: Injection test
+      - name: Bootstrap signature and entitlements
         run: |
-          APP="$APP"
-          BIN="$APP/Contents/MacOS/steam_osx"
-          [[ -f "$BIN" ]] || { echo "skipped: no inner client"; exit 0; }
+          echo "== bundle =="
+          codesign -dvvv "$APP" 2>&1 | grep -E 'Identifier|Format|CodeDirectory|Authority|Timestamp|Notarization|TeamIdentifier|Runtime|Sealed' || true
+          echo
+          echo "== entitlements =="
+          codesign -d --entitlements - "$APP" 2>&1 | head -45
+          echo
+          echo "== hardened runtime =="
+          codesign -dvvv "$APP" 2>&1 | grep -i 'flags' || echo "none"
+          echo
+          echo "== provisioning profile =="
+          security cms -D -i "$APP/Contents/embedded.provisionprofile" 2>/dev/null | plutil -p - 2>/dev/null | head -20 || true
 
+      - name: Bootstrap strings
+        run: |
+          BIN="$APP/Contents/MacOS/steam_osx"
+          echo "== signature-relevant strings =="
+          strings -a "$BIN" | grep -iE 'Steam\.AppBundle|steamapps|bootstrap|Steam\.dmg|Steam\.app' | sort -u | head -20 || true
+          echo
+          printf '%-18s %s\n' "term" "hits"
+          for s in stplug-in addappid luabuilds depotcache appmanifest libraryfolders; do
+            n=$(strings -a "$BIN" | grep -c -- "$s" 2>/dev/null || true)
+            printf '%-18s %s\n' "$s" "${n:-0}"
+          done
+
+      - name: Injection test into the bootstrapper (x86_64)
+        run: |
+          BIN="$APP/Contents/MacOS/steam_osx"
           cat > /tmp/probe.c <<'C'
           #include <stdio.h>
           #include <unistd.h>
@@ -130,30 +114,129 @@ jobs:
               _exit(0);
           }
           C
-          clang -dynamiclib -o /tmp/probe.dylib /tmp/probe.c
-          codesign --force --sign - /tmp/probe.dylib
+
+          # Steam is Intel-only; an arm64 dylib is rejected by dyld for the wrong
+          # reason. Build for the architecture the target actually runs.
+          xcrun clang -arch x86_64 -dynamiclib -o /tmp/probe-x86_64.dylib /tmp/probe.c
+          codesign --force --sign - /tmp/probe-x86_64.dylib
+          lipo -archs /tmp/probe-x86_64.dylib
           rm -f /tmp/luatools-inject-proof.txt
 
-          echo "--- direct: DYLD_INSERT_LIBRARIES against steam_osx ---"
-          DYLD_INSERT_LIBRARIES=/tmp/probe.dylib "$BIN" 2>&1 | head -10 || true
+          echo "--- direct: arch -x86_64 DYLD_INSERT_LIBRARIES=probe steam_osx ---"
+          arch -x86_64 env DYLD_INSERT_LIBRARIES=/tmp/probe-x86_64.dylib "$BIN" \
+            > /tmp/inject-bootstrap.log 2>&1 &
+          PID=$!
+          sleep 6
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          head -10 /tmp/inject-bootstrap.log || true
+
           if [[ -f /tmp/luatools-inject-proof.txt ]]; then
-            echo "RESULT: INJECTION ALLOWED into steam_osx"
+            echo "RESULT: INJECTION LANDED in the bootstrapper (note: this runner has SIP disabled)"
           else
-            echo "RESULT: injection did NOT land"
+            echo "RESULT: injection did NOT land in the bootstrapper"
           fi
 
-          echo
-          echo "--- through the bundle launcher ---"
+      - name: First launch — download the real client
+        run: |
+          BIN="$APP/Contents/MacOS/steam_osx"
+          pkill -f steam_osx 2>/dev/null || true
           rm -f /tmp/luatools-inject-proof.txt
-          DYLD_INSERT_LIBRARIES=/tmp/probe.dylib "$APP/Contents/MacOS/steam" 2>&1 | head -10 || true
-          if [[ -f /tmp/luatools-inject-proof.txt ]]; then
-            echo "RESULT: INJECTION ALLOWED through the launcher"
+
+          echo "--- launching the bootstrapper ---"
+          arch -x86_64 "$BIN" > /tmp/bootstrap-run.log 2>&1 &
+          PID=$!
+
+          REAL=""
+          for _ in $(seq 1 120); do
+            REAL=$(find "$HOME/Library/Application Support/Steam" \
+              -name steam_osx -type f 2>/dev/null | head -1)
+            [[ -n "$REAL" ]] && break
+            kill -0 "$PID" 2>/dev/null || true
+            sleep 2
+          done
+
+          echo "--- processes ---"
+          ps axww -o pid,ppid,command | grep -i '[s]team' | head -20 || true
+          echo
+          echo "--- ~/Library/Application Support/Steam ---"
+          find "$HOME/Library/Application Support/Steam" -maxdepth 6 2>/dev/null | head -100 || true
+          echo
+          echo "--- bootstrap output ---"
+          tail -40 /tmp/bootstrap-run.log || true
+          echo
+          for f in "$HOME/Library/Application Support/Steam/logs/"*; do
+            [[ -f "$f" ]] || continue
+            echo "--- $f ---"
+            tail -30 "$f" || true
+          done
+
+          echo "REAL=$REAL" >> "$GITHUB_ENV"
+
+          pkill -f steam_osx 2>/dev/null || true
+          pkill -f 'Steam Helper' 2>/dev/null || true
+
+          if [[ -z "$REAL" ]]; then
+            echo "::warning::no downloaded steam_osx appeared within 4 minutes"
           else
-            echo "RESULT: launcher stripped DYLD_*"
+            echo "real client: $REAL"
+          fi
+
+      - name: Real client signature and architecture
+        if: env.REAL != ''
+        run: |
+          BIN="$REAL"
+          echo "== architecture =="
+          file -b "$BIN"
+          lipo -archs "$BIN"
+          ls -lh "$BIN"
+          echo
+          echo "== signature =="
+          codesign -dvvv "$BIN" 2>&1 | grep -E 'Identifier|Format|CodeDirectory|Authority|Timestamp|Notarization|TeamIdentifier|Runtime|Sealed' || true
+          echo
+          echo "== entitlements =="
+          codesign -d --entitlements - "$BIN" 2>&1 | head -45
+          echo
+          echo "== __RESTRICT =="
+          otool -l "$BIN" | grep -A2 -i '__RESTRICT' || echo "none"
+          echo
+          echo "== parent bundle =="
+          BUNDLE=$(dirname "$(dirname "$(dirname "$BIN")")")
+          echo "bundle: $BUNDLE"
+          codesign -dvvv "$BUNDLE" 2>&1 | grep -E 'Identifier|Format|Authority|Notarization|TeamIdentifier|flags' || true
+          echo
+          echo "== strings =="
+          printf '%-18s %s\n' "term" "hits"
+          for s in stplug-in addappid luabuilds depotcache appmanifest libraryfolders; do
+            n=$(strings -a "$BIN" | grep -c -- "$s" 2>/dev/null || true)
+            printf '%-18s %s\n' "$s" "${n:-0}"
+          done
+          echo
+          strings -a "$BIN" | grep -iE 'stplug|lua|depotcache|appmanifest' | head -15 || true
+
+      - name: Injection test into the real client (x86_64)
+        if: env.REAL != ''
+        run: |
+          BIN="$REAL"
+          rm -f /tmp/luatools-inject-proof.txt
+          echo "--- arch -x86_64 DYLD_INSERT_LIBRARIES=probe real client ---"
+          arch -x86_64 env DYLD_INSERT_LIBRARIES=/tmp/probe-x86_64.dylib "$BIN" \
+            > /tmp/inject-real.log 2>&1 &
+          PID=$!
+          sleep 8
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          head -10 /tmp/inject-real.log || true
+
+          if [[ -f /tmp/luatools-inject-proof.txt ]]; then
+            echo "RESULT: INJECTION LANDED in the real client (note: this runner has SIP disabled)"
+          else
+            echo "RESULT: injection did NOT land in the real client"
           fi
 
       - name: Unmount
         if: always()
         run: |
+          pkill -f steam_osx 2>/dev/null || true
           hdiutil detach /tmp/vol 2>/dev/null || hdiutil detach /Volumes/Steam 2>/dev/null || true
           ls -la /tmp/vol 2>/dev/null || true

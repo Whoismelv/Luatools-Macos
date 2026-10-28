@@ -173,6 +173,10 @@ jobs:
           "${RUN[@]}" --selftest
           echo
 
+          echo "--- tool check (GitHub release asset, executed on this host) ---"
+          "${RUN[@]}" --verify-tools
+          echo
+
           # The GUI is the thing users actually open. Launch it, wait for the
           # window to report itself, then shut it down.
           echo "--- gui launch ---"
@@ -244,6 +248,86 @@ jobs:
           shasum -a 256 "$DMG" | tee "${DMG}.sha256"
           ls -lh "$DMG"
 
+      - name: Verify DMG (the path a user actually takes)
+        run: |
+          set -uo pipefail
+          VERSION="${{ steps.v.outputs.version }}"
+          LABEL="${{ matrix.label }}"
+          RID="${{ matrix.rid }}"
+          DMG="build/LuaTools-${VERSION}-${LABEL}.dmg"
+          MNT="build/mnt"
+          INSTALLED="build/LuaTools-installed/LuaTools.app"
+          fail=0
+
+          rm -rf "$MNT" build/LuaTools-installed
+          mkdir -p "$MNT"
+          hdiutil attach "$DMG" -nobrowse -readonly -noautoopen -mountpoint "$MNT"
+          trap 'hdiutil detach "$MNT" >/dev/null 2>&1 || true' EXIT
+
+          echo "--- volume layout ---"
+          ls -la "$MNT"
+
+          [[ -d "$MNT/LuaTools.app" ]] || { echo "::error::LuaTools.app missing from DMG"; fail=1; }
+          [[ -L "$MNT/Applications" ]] || { echo "::error::Applications link missing"; fail=1; }
+          [[ -f "$MNT/READ ME.txt" ]] || { echo "::error::READ ME.txt missing"; fail=1; }
+
+          # Copy the way a user drags it, then simulate a browser download: the
+          # DMG is built locally on CI, so it carries no quarantine attribute.
+          ditto "$MNT/LuaTools.app" "$INSTALLED"
+          Q="0081;$(printf '%x' "$(date +%s)");Safari;"
+          xattr -w com.apple.quarantine "$Q" "$INSTALLED"
+
+          echo "--- quarantine attribute ---"
+          xattr -p com.apple.quarantine "$INSTALLED"
+
+          echo "--- Gatekeeper assessment (ad-hoc => rejected; expected) ---"
+          spctl --assess --type execute -vv "$INSTALLED" 2>&1 | head -5 || true
+
+          # The documented install step has to be sufficient.
+          xattr -dr com.apple.quarantine "$INSTALLED"
+
+          RUN=()
+          if [[ "$RID" == "osx-arm64" ]]; then
+            RUN=("$INSTALLED/Contents/MacOS/LuaTools.App")
+          elif arch -x86_64 /usr/bin/true 2>/dev/null; then
+            RUN=(arch -x86_64 "$INSTALLED/Contents/MacOS/LuaTools.App")
+          else
+            echo "::warning::rosetta missing — x64 DMG launch not testable on this runner"
+            hdiutil detach "$MNT" >/dev/null 2>&1 || true
+            trap - EXIT
+            exit 0
+          fi
+
+          echo "--- selftest from the copied app ---"
+          "${RUN[@]}" --selftest
+          [[ $? -eq 0 ]] || fail=1
+
+          echo "--- window from the copied app ---"
+          rm -rf "$HOME/Library/Application Support/LuaToolsMac/logs"
+          "${RUN[@]}" > gui-dmg.log 2>&1 &
+          PID=$!
+          opened=0
+          for _ in $(seq 1 45); do
+            if grep -q LUATOOLS_WINDOW_OPENED gui-dmg.log 2>/dev/null; then opened=1; break; fi
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 1
+          done
+          kill "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+
+          sed -e 's/^/    /' gui-dmg.log | head -30
+          if [[ $opened -eq 1 ]]; then
+            echo "DMG APP LAUNCH OK"
+          else
+            echo "::error::app copied from the DMG did not open a window"
+            fail=1
+          fi
+
+          hdiutil detach "$MNT" >/dev/null 2>&1 || true
+          trap - EXIT
+
+          [[ $fail -eq 0 ]] || exit 1
+
       - uses: actions/upload-artifact@v4
         with:
           name: dmg-${{ matrix.label }}
@@ -251,6 +335,7 @@ jobs:
             build/LuaTools-*.dmg
             build/LuaTools-*.dmg.sha256
             gui.log
+            gui-dmg.log
             sign.log
           if-no-files-found: error
           retention-days: 7

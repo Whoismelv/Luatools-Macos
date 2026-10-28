@@ -23,71 +23,18 @@ public sealed partial class DepotDownloaderRunner
     public bool IsInstalled => File.Exists(ToolPath);
 
     /// <summary>
-    /// Ensures DepotDownloader is present. Order: bundled copy, global dotnet tool, GitHub release.
+    /// Ensures DepotDownloader is present. The SteamRE release ships a
+    /// self-contained single-file binary for every runtime, so that is the only
+    /// path used. A global `dotnet tool` install is framework-dependent and
+    /// cannot be relocated by copying two files; the app bundles its own .NET
+    /// but an external process would still need a system runtime.
     /// </summary>
     public async Task<bool> EnsureToolAsync(IProgress<string>? log = null, CancellationToken ct = default)
     {
         if (IsInstalled) return true;
 
         Directory.CreateDirectory(ToolDirectory);
-
-        if (PlatformPaths.IsMac || PlatformPaths.IsLinux)
-        {
-            var fromDotnet = await TryDotnetToolAsync(log, ct).ConfigureAwait(false);
-            if (fromDotnet) return true;
-        }
-
         return await DownloadReleaseAsync(log, ct).ConfigureAwait(false);
-    }
-
-    private async Task<bool> TryDotnetToolAsync(IProgress<string>? log, CancellationToken ct)
-    {
-        var dotnet = FindOnPath("dotnet");
-        if (dotnet is null) return false;
-
-        log?.Report("installing DepotDownloader via dotnet tool");
-        var psi = new ProcessStartInfo(dotnet)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        psi.ArgumentList.Add("tool");
-        psi.ArgumentList.Add("install");
-        psi.ArgumentList.Add("--global");
-        psi.ArgumentList.Add("depotdownloader");
-
-        var (code, stdout, stderr) = await RunCaptureAsync(psi, ct).ConfigureAwait(false);
-        log?.Report(stdout.Trim());
-        if (code != 0)
-        {
-            log?.Report($"dotnet tool install failed: {stderr.Trim()}");
-            return false;
-        }
-
-        var shim = FindOnPath("DepotDownloader");
-        if (shim is null) return false;
-
-        var target = ToolPath;
-        try
-        {
-            if (!PathsEqual(shim, target))
-            {
-                File.Copy(shim, target, overwrite: true);
-                if (!PlatformPaths.IsWindows && !File.Exists(Path.Combine(ToolDirectory, "DepotDownloader.dll")))
-                {
-                    var dll = Path.Combine(Path.GetDirectoryName(shim)!, "DepotDownloader.dll");
-                    if (File.Exists(dll)) File.Copy(dll, Path.Combine(ToolDirectory, "DepotDownloader.dll"), true);
-                }
-                if (!PlatformPaths.IsWindows) MakeExecutable(target);
-            }
-            return File.Exists(target);
-        }
-        catch (Exception ex)
-        {
-            log?.Report($"could not stage tool: {ex.Message}");
-            return false;
-        }
     }
 
     private async Task<bool> DownloadReleaseAsync(IProgress<string>? log, CancellationToken ct)
@@ -321,17 +268,6 @@ public sealed partial class DepotDownloaderRunner
             progress.Report(new DownloadProgress(DownloadStatus.Installing, 0, 0, 100, line.Trim(), null));
         else if (line.Contains("Downloading depot", StringComparison.OrdinalIgnoreCase))
             progress.Report(new DownloadProgress(DownloadStatus.FetchingManifest, 0, 0, 0, line.Trim(), null));
-    }
-
-    private static async Task<(int Code, string Stdout, string Stderr)> RunCaptureAsync(
-        ProcessStartInfo psi, CancellationToken ct)
-    {
-        using var p = new Process { StartInfo = psi };
-        p.Start();
-        var outTask = p.StandardOutput.ReadToEndAsync(ct);
-        var errTask = p.StandardError.ReadToEndAsync(ct);
-        await p.WaitForExitAsync(ct).ConfigureAwait(false);
-        return (p.ExitCode, await outTask.ConfigureAwait(false), await errTask.ConfigureAwait(false));
     }
 
     public static string? FindOnPath(string name)
