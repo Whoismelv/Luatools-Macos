@@ -1,0 +1,159 @@
+name: steam-probe
+
+# Reads the real Steam for macOS client and answers one question with evidence:
+# can code be injected into it, and does it contain anything like the Windows
+# stplug-in lua path?
+#
+# Read-only: the DMG is mounted read-only, nothing inside Steam.app is modified,
+# and the injection test exits inside the injected constructor.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - name: Host
+        run: |
+          uname -a
+          sw_vers
+          echo "arch: $(uname -m)"
+          csrutil status || true
+
+      - name: Fetch Steam
+        run: |
+          curl -sSL -o steam.dmg https://cdn.akamai.steamstatic.com/client/installer/steam.dmg
+          ls -lh steam.dmg
+          file steam.dmg
+          shasum -a 256 steam.dmg
+
+      - name: Mount
+        run: |
+          mkdir -p /tmp/vol
+          hdiutil attach steam.dmg -nobrowse -readonly -noautoopen -mountpoint /tmp/vol \
+            || hdiutil attach steam.dmg -nobrowse -readonly -noautoopen
+          echo "--- mounted ---"
+          ls -la /tmp/vol
+
+      - name: Locate Steam.app
+        run: |
+          APP=$(find /tmp/vol /Volumes -maxdepth 3 -name 'Steam.app' -type d 2>/dev/null | head -1)
+          echo "APP=$APP"
+          [[ -n "$APP" ]] || { echo "::error::no Steam.app"; exit 1; }
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          echo "--- bundle ---"
+          find "$APP" -maxdepth 3 | head -40
+          echo "--- size ---"
+          du -sh "$APP"
+          echo "--- version ---"
+          defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || \
+            plutil -p "$APP/Contents/Info.plist" | head -20
+
+      - name: Mach-O layout
+        run: |
+          APP="$APP"
+          echo "--- Contents/MacOS ---"
+          ls -la "$APP/Contents/MacOS"
+          for f in "$APP/Contents/MacOS/"*; do
+            [[ -f "$f" ]] || continue
+            echo "== $f"
+            file -b "$f"
+            lipo -archs "$f" 2>/dev/null || true
+          done
+
+      - name: Code signature of the bootstrapper
+        run: |
+          APP="$APP"
+          echo "== app bundle =="
+          codesign -dvvv "$APP" 2>&1 | head -30
+          echo
+          echo "== entitlements =="
+          codesign -d --entitlements - "$APP" 2>&1 | head -40
+          echo
+          echo "== hardened runtime flag =="
+          codesign -dvvv "$APP" 2>&1 | grep -i 'flags' || echo "no flags line"
+
+      - name: Code signature of the inner client
+        run: |
+          APP="$APP"
+          BIN="$APP/Contents/MacOS/steam_osx"
+          if [[ ! -f "$BIN" ]]; then
+            echo "no steam_osx — these are the binaries present:"
+            ls -la "$APP/Contents/MacOS"
+            exit 0
+          fi
+          echo "== $BIN =="
+          codesign -dvvv "$BIN" 2>&1 | head -30
+          echo
+          echo "== entitlements =="
+          codesign -d --entitlements - "$BIN" 2>&1 | head -40
+          echo
+          echo "== __RESTRICT segment (a hard block on DYLD_*) =="
+          otool -l "$BIN" | grep -A2 -i '__RESTRICT' || echo "none"
+          echo
+          echo "== LC_RPATH =="
+          otool -l "$BIN" | grep -A2 LC_RPATH | grep path || echo "none"
+          echo
+          echo "== linked libraries =="
+          otool -L "$BIN" | head -30
+
+      - name: Strings that matter
+        run: |
+          APP="$APP"
+          BIN="$APP/Contents/MacOS/steam_osx"
+          [[ -f "$BIN" ]] || exit 0
+          for s in stplug-in addappid luabuilds depotcache steamapps libraryfolders appmanifest; do
+            printf '%-16s ' "$s"
+            strings -a "$BIN" | grep -c -- "$s" 2>/dev/null || echo 0
+          done
+          echo
+          echo "--- sample context for 'lua' ---"
+          strings -a "$BIN" | grep -i 'lua' | head -15 || echo none
+
+      - name: Injection test
+        run: |
+          APP="$APP"
+          BIN="$APP/Contents/MacOS/steam_osx"
+          [[ -f "$BIN" ]] || { echo "skipped: no inner client"; exit 0; }
+
+          cat > /tmp/probe.c <<'C'
+          #include <stdio.h>
+          #include <unistd.h>
+          __attribute__((constructor)) static void proof(void) {
+              FILE *f = fopen("/tmp/luatools-inject-proof.txt", "w");
+              if (f) { fputs("loaded\n", f); fclose(f); }
+              _exit(0);
+          }
+          C
+          clang -dynamiclib -o /tmp/probe.dylib /tmp/probe.c
+          codesign --force --sign - /tmp/probe.dylib
+          rm -f /tmp/luatools-inject-proof.txt
+
+          echo "--- direct: DYLD_INSERT_LIBRARIES against steam_osx ---"
+          DYLD_INSERT_LIBRARIES=/tmp/probe.dylib "$BIN" 2>&1 | head -10 || true
+          if [[ -f /tmp/luatools-inject-proof.txt ]]; then
+            echo "RESULT: INJECTION ALLOWED into steam_osx"
+          else
+            echo "RESULT: injection did NOT land"
+          fi
+
+          echo
+          echo "--- through the bundle launcher ---"
+          rm -f /tmp/luatools-inject-proof.txt
+          DYLD_INSERT_LIBRARIES=/tmp/probe.dylib "$APP/Contents/MacOS/steam" 2>&1 | head -10 || true
+          if [[ -f /tmp/luatools-inject-proof.txt ]]; then
+            echo "RESULT: INJECTION ALLOWED through the launcher"
+          else
+            echo "RESULT: launcher stripped DYLD_*"
+          fi
+
+      - name: Unmount
+        if: always()
+        run: |
+          hdiutil detach /tmp/vol 2>/dev/null || hdiutil detach /Volumes/Steam 2>/dev/null || true
+          ls -la /tmp/vol 2>/dev/null || true
