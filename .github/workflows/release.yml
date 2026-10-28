@@ -101,18 +101,56 @@ jobs:
 
       - name: Ad-hoc sign
         run: |
-          set -euo pipefail
+          set -uo pipefail
           APP="build/LuaTools.app"
+          LOG="sign.log"
+          : > "$LOG"
+          fail=0
 
-          # Apple Silicon refuses to execute unsigned Mach-O. Sign every binary
-          # in the bundle, deepest first, then seal the bundle itself.
+          record() { echo "$*" | tee -a "$LOG"; }
+
+          record "== mach-o leaves =="
           find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q 'Mach-O' && echo "  $f"
+          done | tee -a "$LOG"
+
+          # Sign every Mach-O leaf first. Apple Silicon refuses to execute
+          # unsigned arm64 code, and the bundle seal is only valid once every
+          # nested object carries a signature.
+          while IFS= read -r -d '' f; do
             if file -b "$f" | grep -q 'Mach-O'; then
-              codesign --force --sign - --timestamp=none "$f"
+              if codesign --force --sign - "$f" >>"$LOG" 2>&1; then
+                record "  signed  ${f#"$APP"/}"
+              else
+                record "  FAILED  ${f#"$APP"/}"
+                fail=1
+              fi
             fi
-          done
-          codesign --force --deep --sign - --timestamp=none "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
+          done < <(find "$APP" -type f -print0)
+
+          # No --deep: nested code is signed, so seal the bundle itself only.
+          if codesign --force --sign - "$APP" >>"$LOG" 2>&1; then
+            record "bundle sealed"
+          else
+            record "bundle seal FAILED"
+            fail=1
+          fi
+
+          if codesign --verify --verbose=4 "$APP" >>"$LOG" 2>&1; then
+            record "verify OK"
+          else
+            record "verify FAILED"
+            fail=1
+          fi
+
+          codesign -dvvv "$APP" 2>&1 | tee -a "$LOG" || true
+
+          if [[ $fail -ne 0 ]]; then
+            echo "::group::sign.log"
+            cat "$LOG"
+            echo "::endgroup::"
+            exit 1
+          fi
 
       - name: Verify bundle executes
         run: |
@@ -182,6 +220,27 @@ jobs:
             build/LuaTools-*.dmg.sha256
           if-no-files-found: error
           retention-days: 7
+
+      # Job logs need repository admin to read, so a failure publishes its own
+      # diagnostics to a throwaway branch where anyone (including the author)
+      # can read them.
+      - name: Publish failure log
+        if: failure()
+        run: |
+          set -uo pipefail
+          {
+            echo "run:  $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "rid:  ${{ matrix.rid }}"
+            echo "--- sign.log ---"
+            cat sign.log 2>/dev/null || echo "(no sign.log written)"
+          } > ci-log.txt
+
+          git config user.name "luatools-ci"
+          git config user.email "ci@users.noreply.github.com"
+          git checkout -B ci-log
+          git add -f ci-log.txt
+          git commit -q -m "ci: ${{ matrix.rid }} failure ($GITHUB_RUN_ID)" || true
+          git push -f origin ci-log || echo "could not publish log branch"
 
   release:
     name: publish release
