@@ -23,32 +23,32 @@ public sealed class Vdf
         if (reader.Peek() == 0xFEFF) reader._pos++;
 
         var root = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-        reader.ParseBody(root, topLevel: true);
+        reader.ParseBody(root);
         return root;
     }
 
-    private void ParseBody(Dictionary<string, object> target, bool topLevel)
+    private void ParseBody(Dictionary<string, object> target)
     {
-        var pendingKey = new StringBuilder();
-
         while (_pos < _text.Length)
         {
-            var token = ReadToken();
-            if (token is null) return;
+            var key = ReadToken();
+            if (key is null) return;
+            if (key == "}") return;
+            if (key == "{") continue;   // stray brace — tolerate
 
-            if (token == "}") return;
+            var value = ReadToken();
+            if (value is null) return;
 
-            if (token == "{")
+            if (value == "{")
             {
-                var key = pendingKey.ToString().Trim();
-                pendingKey.Clear();
                 var child = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-                ParseBody(child, topLevel: false);
-                if (key.Length > 0) target[key] = child;
+                ParseBody(child);
+                target[key] = child;
                 continue;
             }
 
-            pendingKey.Append(token);
+            if (value == "}") return;
+            target[key] = value;
         }
     }
 

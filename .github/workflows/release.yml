@@ -1,0 +1,255 @@
+name: release
+
+# Builds the macOS bundle and the .dmg on a real macOS runner — hdiutil only
+# exists there, so this is the only honest place to produce a DMG.
+#
+#   git tag v1.3.2 && git push origin v1.3.2
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for a manual build (no release is published)"
+        required: false
+        default: "0.0.0-dev"
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  PROJECT: src/LuaTools.App/LuaTools.App.csproj
+
+jobs:
+  build:
+    name: build ${{ matrix.rid }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx-arm64
+            label: arm64
+          - rid: osx-x64
+            label: x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve version
+        id: v
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          [[ -n "$VERSION" ]] || VERSION="0.0.0"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version: $VERSION"
+
+      - name: Publish self-contained app
+        run: |
+          set -euo pipefail
+          dotnet publish "$PROJECT" \
+            -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishTrimmed=false -p:UseAppHost=true \
+            -p:Version=${{ steps.v.outputs.version }} \
+            -o "build/${{ matrix.rid }}"
+
+      - name: Assemble bundle
+        run: |
+          set -euo pipefail
+          RID="${{ matrix.rid }}"
+          VERSION="${{ steps.v.outputs.version }}"
+          APP="build/LuaTools.app"
+          rm -rf "$APP"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp -R "build/$RID/." "$APP/Contents/MacOS/"
+          printf 'APPL????' > "$APP/Contents/PkgInfo"
+
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>              <string>LuaTools</string>
+            <key>CFBundleDisplayName</key>       <string>LuaTools</string>
+            <key>CFBundleIdentifier</key>        <string>tools.lua.luatools</string>
+            <key>CFBundleVersion</key>           <string>$VERSION</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>CFBundlePackageType</key>       <string>APPL</string>
+            <key>CFBundleExecutable</key>        <string>LuaTools.App</string>
+            <key>LSMinimumSystemVersion</key>    <string>11.0</string>
+            <key>NSHighResolutionCapable</key>   <true/>
+            <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
+            <key>NSAppTransportSecurity</key>
+            <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+          </dict>
+          </plist>
+          PLIST
+
+          plutil -lint "$APP/Contents/Info.plist"
+
+      - name: Ad-hoc sign
+        run: |
+          set -euo pipefail
+          APP="build/LuaTools.app"
+
+          # Apple Silicon refuses to execute unsigned Mach-O. Sign every binary
+          # in the bundle, deepest first, then seal the bundle itself.
+          find "$APP" -type f -print0 | while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              codesign --force --sign - --timestamp=none "$f"
+            fi
+          done
+          codesign --force --deep --sign - --timestamp=none "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Verify bundle executes
+        run: |
+          set -euo pipefail
+          APP="build/LuaTools.app"
+          BIN="$APP/Contents/MacOS/LuaTools.App"
+
+          echo "--- arch ---"
+          lipo -archs "$BIN"
+          file -b "$BIN"
+
+          echo "--- selftest ---"
+          if [[ "${{ matrix.rid }}" == "osx-arm64" ]]; then
+            "$BIN" --selftest
+          elif arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "$BIN" --selftest
+          else
+            echo "rosetta not installed — x64 selftest skipped (cross-built, static checks only)"
+          fi
+
+      - name: Build DMG
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.v.outputs.version }}"
+          LABEL="${{ matrix.label }}"
+          DMG="build/LuaTools-${VERSION}-${LABEL}.dmg"
+          STAGE="build/dmg-stage"
+
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          cp -R "build/LuaTools.app" "$STAGE/LuaTools.app"
+          ln -s /Applications "$STAGE/Applications"
+
+          cat > "$STAGE/READ ME.txt" <<'NOTES'
+          LuaTools for macOS
+          ==================
+
+          Install: drag LuaTools.app onto the Applications folder in this window.
+
+          This build is ad-hoc signed, not notarized by Apple, so Gatekeeper will
+          block the first launch. Two ways to allow it:
+
+            1. System Settings -> Privacy & Security -> scroll down ->
+               "LuaTools was blocked" -> Open Anyway.
+
+            2. Terminal (simplest):
+                 xattr -dr com.apple.quarantine /Applications/LuaTools.app
+                 open /Applications/LuaTools.app
+
+          Requirements: macOS 11 or newer. The .NET runtime is bundled.
+
+          The app downloads Steam depots. It does not install games into your
+          Steam library and does not bypass DRM — see the project README.
+          NOTES
+
+          hdiutil create -volname "LuaTools" -srcfolder "$STAGE" \
+            -ov -format UDZO -fs HFS+ "$DMG"
+          hdiutil verify "$DMG"
+
+          shasum -a 256 "$DMG" | tee "${DMG}.sha256"
+          ls -lh "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.label }}
+          path: |
+            build/LuaTools-*.dmg
+            build/LuaTools-*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums and notes
+        run: |
+          set -euo pipefail
+          cd artifacts
+          ls -lh
+          sha256sum ./*.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+          cat > ../NOTES.md <<'EOF'
+          macOS build of LuaTools, produced on a real macOS runner.
+
+          ## Install
+
+          1. Download the `.dmg` for your machine: `arm64` (Apple Silicon) or `x64` (Intel).
+          2. Open it and drag **LuaTools.app** onto **Applications**.
+          3. First launch is blocked by Gatekeeper because the build is ad-hoc signed,
+             not notarized by Apple. Allow it once:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/LuaTools.app
+          open /Applications/LuaTools.app
+          ```
+
+             Or: System Settings → Privacy & Security → "Open Anyway".
+
+          ## What this build does
+
+          - Steam discovery, library and `appmanifest_*.acf` parsing
+          - Steam app/depot metadata, macOS depot detection via `config.oslist`
+          - DepotDownloader acquisition and download with live progress
+          - `luabuilds_*.lua` read/write
+
+          ## What it does not do
+
+          - No Steam client injection (the `inject/` harness is research, not a feature)
+          - No DRM removal — Steamless is PE-only and does not apply to macOS
+          - Anonymous downloads of paid games are rejected by Steam itself
+
+          Every build is ad-hoc signed and verified on a macOS runner. The arm64
+          build additionally runs `LuaTools.App --selftest` there before packaging,
+          so the binary in this release provably executes on Apple Silicon.
+          EOF
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/*.dmg artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" artifacts/*.dmg artifacts/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "LuaTools $TAG (macOS)" \
+              --notes-file NOTES.md \
+              --latest
+          fi

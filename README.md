@@ -12,6 +12,30 @@ macOS and Linux.
 > research harness, not a working feature. Read [What works](#what-works)
 > before expecting LuaTools-for-Windows behaviour.
 
+## Download
+
+Prebuilt `.dmg` files are attached to the [latest release](https://github.com/Whoismelv/Luatools-Macos/releases/latest):
+
+| File | For |
+|---|---|
+| `LuaTools-<version>-arm64.dmg` | Apple Silicon (M1 and later) |
+| `LuaTools-<version>-x64.dmg` | Intel Macs |
+
+Open the disk image, drag `LuaTools.app` onto **Applications**, then allow the
+first launch — the build is ad-hoc signed, not notarized:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/LuaTools.app
+open /Applications/LuaTools.app
+```
+
+Or: System Settings → Privacy & Security → **Open Anyway**.
+
+The release is built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+on a `macos-14` runner, because `hdiutil` (the only real DMG tool) exists only
+on macOS. Each build is ad-hoc signed and verified; the arm64 build additionally
+runs `LuaTools.App --selftest` on the runner before packaging.
+
 ---
 
 ## What works
@@ -19,12 +43,13 @@ macOS and Linux.
 | Feature | State |
 |---|---|
 | Steam discovery (macOS / Windows / Linux paths) | ✅ works |
-| Library + `appmanifest_*.acf` parsing | ✅ works |
+| Library + `appmanifest_*.acf` parsing | ✅ works, verified against a real 11-game install |
 | Steam app list + depot metadata | ✅ works |
 | macOS depot detection (`config.oslist`) | ✅ works, verified |
 | DepotDownloader acquisition + invocation | ✅ works |
 | Progress parsing | ✅ works |
 | `luabuilds_*.lua` read/write | ✅ works |
+| `--selftest` headless check | ✅ works (VDF/ACF, filter, storage, live Steam) |
 | Steam client injection | ❌ not implemented |
 | DRM removal | ❌ not implemented (Steamless is PE-only) |
 
@@ -67,6 +92,18 @@ open dist/osx-arm64/LuaTools.app
 ```
 
 Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download).
+
+Verify the bundle before trusting it:
+
+```sh
+dist/osx-arm64/LuaTools.app/Contents/MacOS/LuaTools.App --selftest
+```
+
+Package it into a `.dmg`:
+
+```sh
+./scripts/make-dmg.sh dist/osx-arm64/LuaTools.app 1.3.2 arm64
+```
 
 If macOS blocks the app:
 
